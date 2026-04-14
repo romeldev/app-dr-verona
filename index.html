@@ -1,0 +1,82 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Planificador Trauma Pro</title>
+    
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.css">
+    
+    <link rel="stylesheet" href="style.css">
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/fabric.js/5.3.1/fabric.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/cropperjs/1.6.1/cropper.min.js"></script>
+</head>
+<body>
+<header class="app-header">
+    <div class="logo">
+        <span class="icon">🦴</span> 
+        <h1>OrthoPlan <span>Pro</span></h1>
+    </div>
+    <div class="subtitle">Planificación Quirúrgica y Biomecánica</div>
+</header>
+    <div class="app-container">
+        
+        <aside class="results-panel">
+            <h2>Resultados</h2>
+            <hr>
+            <div id="results-list">
+                <p class="empty-msg">Use las herramientas para medir.</p>
+            </div>
+        </aside>
+
+        <main class="workspace">
+            <canvas id="mainCanvas"></canvas>
+        </main>
+
+        <aside class="sidebar">
+            <h2>Herramientas</h2>
+            <hr>
+            
+            <div class="tool-section">
+                <label for="imageLoader" class="upload-label">📁 Cargar Radiografía</label>
+                <input type="file" id="imageLoader" accept="image/*" style="display:none"/>
+            </div>
+
+            <div class="tool-section">
+                <h3>Medición</h3>
+                <button id="btn-calibrate" title="Calibrar mm">📏 Calibrar</button>
+                <button id="btn-line" title="Distancia lineal">直线 Distancia</button>
+                <button id="btn-angle" title="Ángulo de intersección">∠ Ángulo</button>
+            </div>
+
+            <div class="tool-section">
+                <h3>Edición</h3>
+                <button id="btn-undo">↩ Deshacer Última</button>
+                <button id="btn-download" class="action-btn">💾 Descargar Imagen</button>
+            </div>
+            
+            <div class="instructions">
+                <p><small><strong>Zoom:</strong> Rueda del ratón</small></p>
+                <p><small><strong>Mover:</strong> Alt + Arrastrar</small></p>
+            </div>
+        </aside>
+    </div>
+
+    <div id="cropModal" class="modal">
+        <div class="modal-content">
+            <h3>Recortar Imagen</h3>
+            <p><small>Arrastre los bordes para seleccionar el área de interés.</small></p>
+            <div class="img-container">
+                <img id="imageToCrop" src="" alt="Previsualización">
+            </div>
+            <div class="modal-buttons">
+                <button id="btn-cancel-crop" class="cancel-btn">Cancelar</button>
+                <button id="btn-do-crop" class="action-btn">Aceptar y Cargar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
