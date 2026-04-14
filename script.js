@@ -6,8 +6,9 @@ const canvas = new fabric.Canvas('mainCanvas', {
     backgroundColor: '#000'
 });
 
-let pixelToMm = 1, isCalibrating = false, isMeasuring = false, isMeasuringAngle = false;
+let pixelToMm = 1, isCalibrating = false, isMeasuring = false, isMeasuringAngle = false, isAngleV2 = false;
 let measurementCount = 0, angleCount = 0, measurements = {}, tempLines = [];
+let angleV2Points = [], ghostLine = null;
 let cropper;
 
 // --- MOTOR DE PANEO Y ZOOM ---
@@ -30,6 +31,12 @@ canvas.on('mouse:move', function(opt) {
         this.requestRenderAll();
         this.lastPosX = e.clientX;
         this.lastPosY = e.clientY;
+    }
+    // Línea fantasma para Ángulo V.2
+    if (isAngleV2 && ghostLine && angleV2Points.length > 0) {
+        const p = canvas.getPointer(opt.e);
+        ghostLine.set({ x2: p.x, y2: p.y });
+        canvas.renderAll();
     }
 });
 
@@ -88,6 +95,23 @@ document.getElementById('btn-do-crop').onclick = () => {
 };
 
 // --- HERRAMIENTAS DE MEDICIÓN ---
+function makeLabel(text, x, y, color) {
+    return new fabric.Text(text, {
+        left: x,
+        top: y,
+        fontSize: 14,
+        fill: color,
+        backgroundColor: 'rgba(0,0,0,0.6)',
+        padding: 3,
+        originX: 'center',
+        originY: 'bottom',
+        selectable: false,
+        evented: false,
+        hasControls: false,
+        hasBorders: false
+    });
+}
+
 function makeNode(p) {
     const s = 8; // Tamaño de la cruz ajustado
     // Líneas de 1px para no tapar la cortical ni el punto de intersección
@@ -113,8 +137,67 @@ function makeNode(p) {
 }
 
 canvas.on('mouse:down', function(obj) {
+    // --- Ángulo V.2: 3 clicks ---
+    if (isAngleV2) {
+        if (this.isDragging) return;
+        canvas.discardActiveObject();
+        const pointer = canvas.getPointer(obj.e);
+        const node = makeNode({ x: pointer.x, y: pointer.y });
+        canvas.add(node);
+        angleV2Points.push({ x: pointer.x, y: pointer.y, node });
+
+        // Remover línea fantasma anterior
+        if (ghostLine) { canvas.remove(ghostLine); ghostLine = null; }
+
+        if (angleV2Points.length === 1) {
+            // Crear línea fantasma desde punto A
+            ghostLine = new fabric.Line([pointer.x, pointer.y, pointer.x, pointer.y], {
+                stroke: '#3498db', strokeWidth: 1, strokeDashArray: [5, 5],
+                opacity: 0.5, selectable: false, evented: false
+            });
+            canvas.add(ghostLine);
+        } else if (angleV2Points.length === 2) {
+            // Dibujar primera línea definitiva: punto A -> vértice
+            const p = angleV2Points;
+            const line1 = new fabric.Line([p[0].x, p[0].y, p[1].x, p[1].y], {
+                stroke: '#3498db', strokeWidth: 1.5, strokeUniform: true,
+                selectable: true, hasControls: false, hasBorders: false
+            });
+            canvas.add(line1);
+            angleV2Points[0].line = line1;
+            // Crear línea fantasma desde vértice
+            ghostLine = new fabric.Line([pointer.x, pointer.y, pointer.x, pointer.y], {
+                stroke: '#3498db', strokeWidth: 1, strokeDashArray: [5, 5],
+                opacity: 0.5, selectable: false, evented: false
+            });
+            canvas.add(ghostLine);
+        } else if (angleV2Points.length === 3) {
+            // Dibujar segunda línea definitiva: vértice -> punto B
+            const p = angleV2Points;
+            const line2 = new fabric.Line([p[1].x, p[1].y, p[2].x, p[2].y], {
+                stroke: '#3498db', strokeWidth: 1.5, strokeUniform: true,
+                selectable: true, hasControls: false, hasBorders: false
+            });
+            canvas.add(line2);
+            const o1 = { line: p[0].line, n1: p[0].node, n2: p[1].node };
+            const o2 = { line: line2, n1: p[1].node, n2: p[2].node };
+            vincularEventos(o1.line, o1.n1, o1.n2);
+            vincularEventos(o2.line, o2.n1, o2.n2);
+            finalizarAngulo(o1, o2);
+            angleV2Points = [];
+            isAngleV2 = false;
+            canvas.selection = true;
+            canvas.skipTargetFind = false;
+            canvas.defaultCursor = 'default';
+        }
+        canvas.renderAll();
+        return;
+    }
     if (!isMeasuring && !isCalibrating && !isMeasuringAngle) return;
-    if (obj.target || this.isDragging) return;
+    if (this.isDragging) return;
+    if (obj.target && !(isMeasuringAngle && tempLines.length > 0)) return;
+    canvas.discardActiveObject();
+    canvas.selection = false;
 
     const pointer = canvas.getPointer(obj.e);
     const p1 = { x: pointer.x, y: pointer.y };
@@ -150,8 +233,13 @@ const line = new fabric.Line([p1.x, p1.y, p1.x, p1.y], {
             tempLines.push({ line, n1, n2 }); vincularEventos(line, n1, n2);
             if (tempLines.length === 2) {
                 finalizarAngulo(tempLines[0], tempLines[1]); tempLines = []; isMeasuringAngle = false;
+            } else {
+                canvas.defaultCursor = 'crosshair';
+                return;
             }
         }
+        canvas.selection = true;
+        canvas.skipTargetFind = false;
         canvas.defaultCursor = 'default';
     };
     canvas.on('mouse:move', onMove); canvas.on('mouse:up', onUp);
@@ -159,23 +247,81 @@ const line = new fabric.Line([p1.x, p1.y, p1.x, p1.y], {
 
 function finalizarLinea(line, n1, n2, px) {
     measurementCount++; const id = `m_${Date.now()}`;
-    measurements[id] = { line, n1, n2, type: 'distancia' };
+    const midX = (line.x1 + line.x2) / 2, midY = (line.y1 + line.y2) / 2;
+    const valorText = `${(px * pixelToMm).toFixed(2)} mm`;
+    const label = makeLabel(valorText, midX, midY, '#2ecc71');
+    canvas.add(label);
+    measurements[id] = { line, n1, n2, label, type: 'distancia' };
     line.measurementId = id; vincularEventos(line, n1, n2);
-    agregarAlPanel(id, `Medida ${measurementCount}`, `${(px * pixelToMm).toFixed(2)} mm`);
+    agregarAlPanel(id, `Medida ${measurementCount}`, valorText);
 }
 
 function finalizarAngulo(o1, o2) {
     angleCount++; const id = `a_${Date.now()}`;
-    measurements[id] = { line1: o1.line, n1: o1.n1, n1b: o1.n2, line2: o2.line, n2: o2.n1, n2b: o2.n2, type: 'angulo' };
+    const vertex = interseccionLineas(o1.line, o2.line);
+    const valorText = `${calcularAngulo(o1.line, o2.line)}°`;
+    const label = makeLabel(valorText, vertex.x + 30, vertex.y - 10, '#3498db');
+    const arc = crearArco(o1.line, o2.line);
+    canvas.add(arc, label);
+    measurements[id] = { line1: o1.line, n1: o1.n1, n1b: o1.n2, line2: o2.line, n2: o2.n1, n2b: o2.n2, label, arc, type: 'angulo' };
     o1.line.measurementId = o2.line.measurementId = id;
-    agregarAlPanel(id, `Ángulo ${angleCount}`, `${calcularAngulo(o1.line, o2.line)}°`);
+    agregarAlPanel(id, `Ángulo ${angleCount}`, valorText);
 }
 
 function calcularAngulo(l1, l2) {
-    const a1 = Math.atan2(l1.y2 - l1.y1, l1.x2 - l1.x1);
-    const a2 = Math.atan2(l2.y2 - l2.y1, l2.x2 - l2.x1);
+    // Calcular direcciones desde el vértice (intersección) hacia los extremos
+    const vertex = interseccionLineas(l1, l2);
+    const d1a = Math.hypot(l1.x1 - vertex.x, l1.y1 - vertex.y);
+    const d1b = Math.hypot(l1.x2 - vertex.x, l1.y2 - vertex.y);
+    const p1 = d1a > d1b ? { x: l1.x1, y: l1.y1 } : { x: l1.x2, y: l1.y2 };
+    const d2a = Math.hypot(l2.x1 - vertex.x, l2.y1 - vertex.y);
+    const d2b = Math.hypot(l2.x2 - vertex.x, l2.y2 - vertex.y);
+    const p2 = d2a > d2b ? { x: l2.x1, y: l2.y1 } : { x: l2.x2, y: l2.y2 };
+    const a1 = Math.atan2(p1.y - vertex.y, p1.x - vertex.x);
+    const a2 = Math.atan2(p2.y - vertex.y, p2.x - vertex.x);
     let res = Math.abs((a1 - a2) * 180 / Math.PI);
     return (res > 180 ? 360 - res : res).toFixed(1);
+}
+
+function interseccionLineas(l1, l2) {
+    const x1 = l1.x1, y1 = l1.y1, x2 = l1.x2, y2 = l1.y2;
+    const x3 = l2.x1, y3 = l2.y1, x4 = l2.x2, y4 = l2.y2;
+    const denom = (x1 - x2) * (y3 - y4) - (y1 - y2) * (x3 - x4);
+    if (Math.abs(denom) < 0.001) {
+        // Líneas paralelas: usar promedio de endpoints más cercanos
+        return { x: (x2 + x3) / 2, y: (y2 + y3) / 2 };
+    }
+    const t = ((x1 - x3) * (y3 - y4) - (y1 - y3) * (x3 - x4)) / denom;
+    return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
+}
+
+function crearArco(l1, l2) {
+    const vertex = interseccionLineas(l1, l2);
+    const r = 25;
+    // Calcular dirección desde el vértice hacia el extremo más lejano de cada línea
+    const d1a = Math.hypot(l1.x1 - vertex.x, l1.y1 - vertex.y);
+    const d1b = Math.hypot(l1.x2 - vertex.x, l1.y2 - vertex.y);
+    const p1 = d1a > d1b ? { x: l1.x1, y: l1.y1 } : { x: l1.x2, y: l1.y2 };
+    const d2a = Math.hypot(l2.x1 - vertex.x, l2.y1 - vertex.y);
+    const d2b = Math.hypot(l2.x2 - vertex.x, l2.y2 - vertex.y);
+    const p2 = d2a > d2b ? { x: l2.x1, y: l2.y1 } : { x: l2.x2, y: l2.y2 };
+    let a1 = Math.atan2(p1.y - vertex.y, p1.x - vertex.x);
+    let a2 = Math.atan2(p2.y - vertex.y, p2.x - vertex.x);
+    // Arco por el camino más corto (ángulo menor)
+    let diff = a2 - a1;
+    while (diff > Math.PI) diff -= 2 * Math.PI;
+    while (diff < -Math.PI) diff += 2 * Math.PI;
+    if (diff < 0) { a1 = a1 + diff; diff = -diff; }
+    const largeArc = diff > Math.PI ? 1 : 0;
+    const startX = vertex.x + r * Math.cos(a1);
+    const startY = vertex.y + r * Math.sin(a1);
+    const endX = vertex.x + r * Math.cos(a1 + diff);
+    const endY = vertex.y + r * Math.sin(a1 + diff);
+    const pathData = `M ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY}`;
+    return new fabric.Path(pathData, {
+        fill: '', stroke: '#3498db', strokeWidth: 1.5,
+        selectable: false, evented: false, hasControls: false, hasBorders: false
+    });
 }
 
 // --- VINCULACIÓN DE MOVIMIENTO EN BLOQUE ---
@@ -209,9 +355,28 @@ function actualizarValoresPanel(id) {
     const valSpan = document.getElementById(`val-${id}`);
     if (m.type === 'distancia') {
         const px = Math.sqrt(Math.pow(m.line.x2 - m.line.x1, 2) + Math.pow(m.line.y2 - m.line.y1, 2));
-        valSpan.innerText = `${(px * pixelToMm).toFixed(2)} mm`;
+        const valorText = `${(px * pixelToMm).toFixed(2)} mm`;
+        valSpan.innerText = valorText;
+        if (m.label) {
+            const midX = (m.n1.left + m.n2.left) / 2;
+            const midY = (m.n1.top + m.n2.top) / 2;
+            m.label.set({ text: valorText, left: midX, top: midY });
+            m.label.setCoords();
+        }
     } else {
-        valSpan.innerText = `${calcularAngulo(m.line1, m.line2)}°`;
+        const valorText = `${calcularAngulo(m.line1, m.line2)}°`;
+        valSpan.innerText = valorText;
+        const vertex = interseccionLineas(m.line1, m.line2);
+        if (m.label) {
+            m.label.set({ text: valorText, left: vertex.x + 30, top: vertex.y - 10 });
+            m.label.setCoords();
+        }
+        if (m.arc) {
+            canvas.remove(m.arc);
+            m.arc = crearArco(m.line1, m.line2);
+            m.arc.visible = m.line1.visible;
+            canvas.add(m.arc);
+        }
     }
 }
 
@@ -225,6 +390,8 @@ function agregarAlPanel(id, nombre, valor) {
 window.toggleVisibility = function(id) {
     const m = measurements[id];
     const isVis = m.type === 'distancia' ? !m.line.visible : !m.line1.visible;
+    if (m.label) m.label.visible = isVis;
+    if (m.arc) m.arc.visible = isVis;
     if (m.type === 'distancia') { m.line.visible = m.n1.visible = m.n2.visible = isVis; }
     else { m.line1.visible = m.n1.visible = m.n1b.visible = m.line2.visible = m.n2.visible = m.n2b.visible = isVis; }
     canvas.renderAll();
@@ -240,12 +407,16 @@ document.getElementById('btn-download').onclick = () => {
 document.getElementById('btn-undo').onclick = () => {
     const ids = Object.keys(measurements); if (ids.length === 0) return;
     const lastId = ids[ids.length - 1], m = measurements[lastId];
+    if (m.label) canvas.remove(m.label);
+    if (m.arc) canvas.remove(m.arc);
     if (m.type === 'distancia') canvas.remove(m.line, m.n1, m.n2);
     else canvas.remove(m.line1, m.n1, m.n1b, m.line2, m.n2, m.n2b);
     document.getElementById(`item-${lastId}`).remove(); delete measurements[lastId];
     canvas.renderAll();
 };
 
-document.getElementById('btn-calibrate').onclick = () => { isCalibrating = true; isMeasuring = isMeasuringAngle = false; canvas.defaultCursor = 'crosshair'; };
-document.getElementById('btn-line').onclick = () => { isMeasuring = true; isCalibrating = isMeasuringAngle = false; canvas.defaultCursor = 'crosshair'; };
-document.getElementById('btn-angle').onclick = () => { isMeasuringAngle = true; isCalibrating = isMeasuring = false; canvas.defaultCursor = 'crosshair'; };
+function resetModes() { isCalibrating = isMeasuring = isMeasuringAngle = isAngleV2 = false; angleV2Points = []; tempLines = []; }
+document.getElementById('btn-calibrate').onclick = () => { resetModes(); isCalibrating = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-line').onclick = () => { resetModes(); isMeasuring = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-angle').onclick = () => { resetModes(); isMeasuringAngle = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-angle-v2').onclick = () => { resetModes(); isAngleV2 = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; canvas.selection = false; };
