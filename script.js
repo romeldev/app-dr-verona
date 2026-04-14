@@ -189,6 +189,7 @@ canvas.on('mouse:down', function(obj) {
             canvas.selection = true;
             canvas.skipTargetFind = false;
             canvas.defaultCursor = 'default';
+            setActiveTool(null);
         }
         canvas.renderAll();
         return;
@@ -241,6 +242,7 @@ const line = new fabric.Line([p1.x, p1.y, p1.x, p1.y], {
         canvas.selection = true;
         canvas.skipTargetFind = false;
         canvas.defaultCursor = 'default';
+        setActiveTool(null);
     };
     canvas.on('mouse:move', onMove); canvas.on('mouse:up', onUp);
 });
@@ -415,8 +417,13 @@ document.getElementById('btn-undo').onclick = () => {
     canvas.renderAll();
 };
 
-function resetModes() { isCalibrating = isMeasuring = isMeasuringAngle = isAngleV2 = false; angleV2Points = []; tempLines = []; }
-document.getElementById('btn-calibrate').onclick = () => { resetModes(); isCalibrating = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
-document.getElementById('btn-line').onclick = () => { resetModes(); isMeasuring = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
-document.getElementById('btn-angle').onclick = () => { resetModes(); isMeasuringAngle = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
-document.getElementById('btn-angle-v2').onclick = () => { resetModes(); isAngleV2 = true; canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; canvas.selection = false; };
+const toolBtns = ['btn-calibrate', 'btn-line', 'btn-angle', 'btn-angle-v2'];
+function setActiveTool(activeId) {
+    toolBtns.forEach(id => document.getElementById(id).classList.remove('active-tool'));
+    if (activeId) document.getElementById(activeId).classList.add('active-tool');
+}
+function resetModes() { isCalibrating = isMeasuring = isMeasuringAngle = isAngleV2 = false; angleV2Points = []; tempLines = []; setActiveTool(null); }
+document.getElementById('btn-calibrate').onclick = () => { resetModes(); isCalibrating = true; setActiveTool('btn-calibrate'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-line').onclick = () => { resetModes(); isMeasuring = true; setActiveTool('btn-line'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-angle').onclick = () => { resetModes(); isMeasuringAngle = true; setActiveTool('btn-angle'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-angle-v2').onclick = () => { resetModes(); isAngleV2 = true; setActiveTool('btn-angle-v2'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; canvas.selection = false; };
