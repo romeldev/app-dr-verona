@@ -96,7 +96,7 @@ document.getElementById('btn-do-crop').onclick = () => {
 
 // --- HERRAMIENTAS DE MEDICIÓN ---
 function makeLabel(text, x, y, color) {
-    return new fabric.Text(text, {
+    const label = new fabric.Text(text, {
         left: x,
         top: y,
         fontSize: 14,
@@ -105,11 +105,47 @@ function makeLabel(text, x, y, color) {
         padding: 3,
         originX: 'center',
         originY: 'bottom',
-        selectable: false,
-        evented: false,
-        hasControls: false,
-        hasBorders: false
+        selectable: true,
+        evented: true,
+        hasControls: true,
+        hasBorders: true,
+        lockRotation: true,
+        lockSkewingX: true,
+        lockSkewingY: true,
+        borderColor: 'rgba(255,255,255,0.7)',
+        cornerColor: 'rgba(255,255,255,0.9)',
+        cornerStrokeColor: 'rgba(0,0,0,0.6)',
+        cornerSize: 8,
+        transparentCorners: false
     });
+    label.setControlsVisibility({ mtr: false, ml: false, mr: false, mt: false, mb: false });
+
+    label.on('scaling', function() {
+        const scale = Math.max(this.scaleX, this.scaleY);
+        const newSize = Math.max(6, Math.round(this.fontSize * scale));
+        this.set({ fontSize: newSize, scaleX: 1, scaleY: 1 });
+        this.setCoords();
+    });
+
+    label.on('moved', function() {
+        const id = this.measurementId;
+        if (!id) return;
+        const m = measurements[id];
+        if (!m) return;
+        let defX, defY;
+        if (m.type === 'distancia') {
+            defX = (m.n1.left + m.n2.left) / 2;
+            defY = (m.n1.top + m.n2.top) / 2;
+        } else {
+            const v = interseccionLineas(m.line1, m.line2);
+            defX = v.x + 30;
+            defY = v.y - 10;
+        }
+        m.labelOffsetX = this.left - defX;
+        m.labelOffsetY = this.top - defY;
+    });
+
+    return label;
 }
 
 function makeNode(p) {
@@ -253,7 +289,8 @@ function finalizarLinea(line, n1, n2, px) {
     const valorText = `${(px * pixelToMm).toFixed(2)} mm`;
     const label = makeLabel(valorText, midX, midY, '#2ecc71');
     canvas.add(label);
-    measurements[id] = { line, n1, n2, label, type: 'distancia' };
+    measurements[id] = { line, n1, n2, label, type: 'distancia', labelOffsetX: 0, labelOffsetY: 0 };
+    label.measurementId = id;
     line.measurementId = id; vincularEventos(line, n1, n2);
     agregarAlPanel(id, `Medida ${measurementCount}`, valorText);
 }
@@ -265,7 +302,8 @@ function finalizarAngulo(o1, o2) {
     const label = makeLabel(valorText, vertex.x + 30, vertex.y - 10, '#3498db');
     const arc = crearArco(o1.line, o2.line);
     canvas.add(arc, label);
-    measurements[id] = { line1: o1.line, n1: o1.n1, n1b: o1.n2, line2: o2.line, n2: o2.n1, n2b: o2.n2, label, arc, type: 'angulo' };
+    measurements[id] = { line1: o1.line, n1: o1.n1, n1b: o1.n2, line2: o2.line, n2: o2.n1, n2b: o2.n2, label, arc, type: 'angulo', labelOffsetX: 0, labelOffsetY: 0 };
+    label.measurementId = id;
     o1.line.measurementId = o2.line.measurementId = id;
     agregarAlPanel(id, `Ángulo ${angleCount}`, valorText);
 }
@@ -362,7 +400,7 @@ function actualizarValoresPanel(id) {
         if (m.label) {
             const midX = (m.n1.left + m.n2.left) / 2;
             const midY = (m.n1.top + m.n2.top) / 2;
-            m.label.set({ text: valorText, left: midX, top: midY });
+            m.label.set({ text: valorText, left: midX + (m.labelOffsetX || 0), top: midY + (m.labelOffsetY || 0) });
             m.label.setCoords();
         }
     } else {
@@ -370,7 +408,7 @@ function actualizarValoresPanel(id) {
         valSpan.innerText = valorText;
         const vertex = interseccionLineas(m.line1, m.line2);
         if (m.label) {
-            m.label.set({ text: valorText, left: vertex.x + 30, top: vertex.y - 10 });
+            m.label.set({ text: valorText, left: vertex.x + 30 + (m.labelOffsetX || 0), top: vertex.y - 10 + (m.labelOffsetY || 0) });
             m.label.setCoords();
         }
         if (m.arc) {
@@ -392,7 +430,10 @@ function agregarAlPanel(id, nombre, valor) {
 window.toggleVisibility = function(id) {
     const m = measurements[id];
     const isVis = m.type === 'distancia' ? !m.line.visible : !m.line1.visible;
-    if (m.label) m.label.visible = isVis;
+    if (m.label) {
+        if (!isVis && canvas.getActiveObject() === m.label) canvas.discardActiveObject();
+        m.label.visible = isVis;
+    }
     if (m.arc) m.arc.visible = isVis;
     if (m.type === 'distancia') { m.line.visible = m.n1.visible = m.n2.visible = isVis; }
     else { m.line1.visible = m.n1.visible = m.n1b.visible = m.line2.visible = m.n2.visible = m.n2b.visible = isVis; }
