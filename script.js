@@ -6,8 +6,8 @@ const canvas = new fabric.Canvas('mainCanvas', {
     backgroundColor: '#000'
 });
 
-let pixelToMm = 1, isCalibrating = false, isMeasuring = false, isMeasuringAngle = false, isAngleV2 = false;
-let measurementCount = 0, angleCount = 0, measurements = {}, tempLines = [];
+let pixelToMm = 1, isCalibrating = false, isMeasuring = false, isMeasuringAngle = false, isAngleV2 = false, isROI = false;
+let measurementCount = 0, angleCount = 0, roiCount = 0, measurements = {}, tempLines = [];
 let angleV2Points = [], ghostLine = null;
 let cropper;
 
@@ -136,6 +136,9 @@ function makeLabel(text, x, y, color) {
         if (m.type === 'distancia') {
             defX = (m.n1.left + m.n2.left) / 2;
             defY = (m.n1.top + m.n2.top) / 2;
+        } else if (m.type === 'roi') {
+            defX = m.ellipse.left;
+            defY = m.ellipse.top - m.ellipse.ry - 8;
         } else {
             const v = interseccionLineas(m.line1, m.line2);
             defX = v.x + 30;
@@ -230,6 +233,54 @@ canvas.on('mouse:down', function(obj) {
         canvas.renderAll();
         return;
     }
+    // --- ROI elíptica ---
+    if (isROI) {
+        if (this.isDragging) return;
+        if (obj.target) return;
+        canvas.discardActiveObject();
+        canvas.selection = false;
+
+        const start = canvas.getPointer(obj.e);
+        const ellipse = new fabric.Ellipse({
+            left: start.x, top: start.y, rx: 0, ry: 0,
+            originX: 'center', originY: 'center',
+            fill: 'rgba(155, 89, 182, 0.12)',
+            stroke: '#9b59b6', strokeWidth: 1.5, strokeUniform: true,
+            selectable: true, hasControls: false, hasBorders: false
+        });
+        const n1 = makeNode(start);
+        const n2 = makeNode(start);
+        canvas.add(ellipse, n1, n2);
+
+        const onMoveROI = (opt) => {
+            const p = canvas.getPointer(opt.e);
+            n2.set({ left: p.x, top: p.y });
+            ellipse.set({
+                left: (start.x + p.x) / 2,
+                top:  (start.y + p.y) / 2,
+                rx:   Math.abs(p.x - start.x) / 2,
+                ry:   Math.abs(p.y - start.y) / 2
+            });
+            canvas.renderAll();
+        };
+        const onUpROI = () => {
+            canvas.off('mouse:move', onMoveROI);
+            canvas.off('mouse:up', onUpROI);
+            if (ellipse.rx < 2 || ellipse.ry < 2) {
+                canvas.remove(ellipse, n1, n2);
+            } else {
+                finalizarROI(ellipse, n1, n2);
+            }
+            isROI = false;
+            canvas.selection = true;
+            canvas.skipTargetFind = false;
+            canvas.defaultCursor = 'default';
+            setActiveTool(null);
+        };
+        canvas.on('mouse:move', onMoveROI);
+        canvas.on('mouse:up', onUpROI);
+        return;
+    }
     if (!isMeasuring && !isCalibrating && !isMeasuringAngle) return;
     if (this.isDragging) return;
     if (obj.target && !(isMeasuringAngle && tempLines.length > 0)) return;
@@ -293,6 +344,51 @@ function finalizarLinea(line, n1, n2, px) {
     label.measurementId = id;
     line.measurementId = id; vincularEventos(line, n1, n2);
     agregarAlPanel(id, `Medida ${measurementCount}`, valorText);
+}
+
+function textoROI(e) {
+    const a_mm = e.rx * pixelToMm;
+    const b_mm = e.ry * pixelToMm;
+    const area = Math.PI * a_mm * b_mm;
+    const sum = a_mm + b_mm;
+    const h = sum > 0 ? Math.pow((a_mm - b_mm) / sum, 2) : 0;
+    const peri = Math.PI * sum * (1 + 3 * h / (10 + Math.sqrt(4 - 3 * h)));
+    return `${area.toFixed(1)} mm² | ${peri.toFixed(1)} mm`;
+}
+
+function finalizarROI(ellipse, n1, n2) {
+    roiCount++;
+    const id = `r_${Date.now()}`;
+    const valorText = textoROI(ellipse);
+    const label = makeLabel(valorText, ellipse.left, ellipse.top - ellipse.ry - 8, '#9b59b6');
+    canvas.add(label);
+    measurements[id] = { ellipse, n1, n2, label, type: 'roi', labelOffsetX: 0, labelOffsetY: 0 };
+    label.measurementId = id;
+    ellipse.measurementId = id;
+    vincularEventosROI(ellipse, n1, n2);
+    agregarAlPanel(id, `ROI ${roiCount}`, valorText);
+}
+
+function vincularEventosROI(ellipse, n1, n2) {
+    const fromNodes = () => {
+        ellipse.set({
+            left: (n1.left + n2.left) / 2,
+            top:  (n1.top + n2.top) / 2,
+            rx:   Math.abs(n2.left - n1.left) / 2,
+            ry:   Math.abs(n2.top - n1.top) / 2
+        });
+        ellipse.setCoords();
+        actualizarValoresPanel(ellipse.measurementId);
+    };
+    const fromEllipse = () => {
+        n1.set({ left: ellipse.left - ellipse.rx, top: ellipse.top - ellipse.ry });
+        n2.set({ left: ellipse.left + ellipse.rx, top: ellipse.top + ellipse.ry });
+        n1.setCoords(); n2.setCoords();
+        actualizarValoresPanel(ellipse.measurementId);
+    };
+    n1.on('moving', fromNodes);
+    n2.on('moving', fromNodes);
+    ellipse.on('moving', fromEllipse);
 }
 
 function finalizarAngulo(o1, o2) {
@@ -403,6 +499,17 @@ function actualizarValoresPanel(id) {
             m.label.set({ text: valorText, left: midX + (m.labelOffsetX || 0), top: midY + (m.labelOffsetY || 0) });
             m.label.setCoords();
         }
+    } else if (m.type === 'roi') {
+        const valorText = textoROI(m.ellipse);
+        valSpan.innerText = valorText;
+        if (m.label) {
+            m.label.set({
+                text: valorText,
+                left: m.ellipse.left + (m.labelOffsetX || 0),
+                top:  m.ellipse.top - m.ellipse.ry - 8 + (m.labelOffsetY || 0)
+            });
+            m.label.setCoords();
+        }
     } else {
         const valorText = `${calcularAngulo(m.line1, m.line2)}°`;
         valSpan.innerText = valorText;
@@ -429,13 +536,16 @@ function agregarAlPanel(id, nombre, valor) {
 
 window.toggleVisibility = function(id) {
     const m = measurements[id];
-    const isVis = m.type === 'distancia' ? !m.line.visible : !m.line1.visible;
+    const isVis = m.type === 'distancia' ? !m.line.visible
+                : m.type === 'roi'       ? !m.ellipse.visible
+                : !m.line1.visible;
     if (m.label) {
         if (!isVis && canvas.getActiveObject() === m.label) canvas.discardActiveObject();
         m.label.visible = isVis;
     }
     if (m.arc) m.arc.visible = isVis;
     if (m.type === 'distancia') { m.line.visible = m.n1.visible = m.n2.visible = isVis; }
+    else if (m.type === 'roi') { m.ellipse.visible = m.n1.visible = m.n2.visible = isVis; }
     else { m.line1.visible = m.n1.visible = m.n1b.visible = m.line2.visible = m.n2.visible = m.n2b.visible = isVis; }
     canvas.renderAll();
 };
@@ -453,18 +563,21 @@ document.getElementById('btn-undo').onclick = () => {
     if (m.label) canvas.remove(m.label);
     if (m.arc) canvas.remove(m.arc);
     if (m.type === 'distancia') canvas.remove(m.line, m.n1, m.n2);
+    else if (m.type === 'roi') canvas.remove(m.ellipse, m.n1, m.n2);
     else canvas.remove(m.line1, m.n1, m.n1b, m.line2, m.n2, m.n2b);
     document.getElementById(`item-${lastId}`).remove(); delete measurements[lastId];
     canvas.renderAll();
 };
 
-const toolBtns = ['btn-calibrate', 'btn-line', 'btn-angle', 'btn-angle-v2'];
+const toolBtns = ['btn-calibrate', 'btn-line', 'btn-angle', 'btn-angle-v2', 'btn-roi'];
 function setActiveTool(activeId) {
-    toolBtns.forEach(id => document.getElementById(id).classList.remove('active-tool'));
-    if (activeId) document.getElementById(activeId).classList.add('active-tool');
+    toolBtns.forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('active-tool'); });
+    if (activeId) { const el = document.getElementById(activeId); if (el) el.classList.add('active-tool'); }
 }
-function resetModes() { isCalibrating = isMeasuring = isMeasuringAngle = isAngleV2 = false; angleV2Points = []; tempLines = []; setActiveTool(null); }
+function resetModes() { isCalibrating = isMeasuring = isMeasuringAngle = isAngleV2 = isROI = false; angleV2Points = []; tempLines = []; setActiveTool(null); }
 document.getElementById('btn-calibrate').onclick = () => { resetModes(); isCalibrating = true; setActiveTool('btn-calibrate'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
 document.getElementById('btn-line').onclick = () => { resetModes(); isMeasuring = true; setActiveTool('btn-line'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
-document.getElementById('btn-angle').onclick = () => { resetModes(); isMeasuringAngle = true; setActiveTool('btn-angle'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+const btnAngle = document.getElementById('btn-angle');
+if (btnAngle) btnAngle.onclick = () => { resetModes(); isMeasuringAngle = true; setActiveTool('btn-angle'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
 document.getElementById('btn-angle-v2').onclick = () => { resetModes(); isAngleV2 = true; setActiveTool('btn-angle-v2'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; canvas.selection = false; };
+document.getElementById('btn-roi').onclick = () => { resetModes(); isROI = true; setActiveTool('btn-roi'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
