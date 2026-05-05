@@ -37,9 +37,10 @@ button {
 button:hover { background: #3d3d3d; border-color: #3498db; }
 button.active-tool { background: #3498db; color: #fff; border-color: #2980b9; }
 
-#btn-calibrate { border-left: 5px solid yellow; }
+#btn-calibrate { border-left: 5px solid #e74c3c; }
 #btn-line { border-left: 5px solid #2ecc71; }
-#btn-angle, #btn-angle-v2 { border-left: 5px solid #3498db; }
+#btn-angle { border-left: 5px solid #3498db; }
+#btn-angle-v2 { border-left: 5px solid #f1c40f; }
 #btn-roi { border-left: 5px solid #9b59b6; }
 #btn-circle { border-left: 5px solid #e67e22; }
 #btn-pan { border-left: 5px solid #95a5a6; }

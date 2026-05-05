@@ -238,7 +238,7 @@ canvas.on('mouse:down', function(obj) {
         if (angleV2Points.length === 1) {
             // Crear línea fantasma desde punto A
             ghostLine = new fabric.Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-                stroke: '#3498db', strokeWidth: 1, strokeDashArray: [5, 5],
+                stroke: '#f1c40f', strokeWidth: 1, strokeDashArray: [5, 5],
                 opacity: 0.5, selectable: false, evented: false
             });
             canvas.add(ghostLine);
@@ -246,14 +246,14 @@ canvas.on('mouse:down', function(obj) {
             // Dibujar primera línea definitiva: punto A -> vértice
             const p = angleV2Points;
             const line1 = new fabric.Line([p[0].x, p[0].y, p[1].x, p[1].y], {
-                stroke: '#3498db', strokeWidth: 1.5, strokeUniform: true,
+                stroke: '#f1c40f', strokeWidth: 1.5, strokeUniform: true,
                 selectable: true, hasControls: false, hasBorders: false
             });
             canvas.add(line1);
             angleV2Points[0].line = line1;
             // Crear línea fantasma desde vértice
             ghostLine = new fabric.Line([pointer.x, pointer.y, pointer.x, pointer.y], {
-                stroke: '#3498db', strokeWidth: 1, strokeDashArray: [5, 5],
+                stroke: '#f1c40f', strokeWidth: 1, strokeDashArray: [5, 5],
                 opacity: 0.5, selectable: false, evented: false
             });
             canvas.add(ghostLine);
@@ -261,7 +261,7 @@ canvas.on('mouse:down', function(obj) {
             // Dibujar segunda línea definitiva: vértice -> punto B
             const p = angleV2Points;
             const line2 = new fabric.Line([p[1].x, p[1].y, p[2].x, p[2].y], {
-                stroke: '#3498db', strokeWidth: 1.5, strokeUniform: true,
+                stroke: '#f1c40f', strokeWidth: 1.5, strokeUniform: true,
                 selectable: true, hasControls: false, hasBorders: false
             });
             canvas.add(line2);
@@ -338,7 +338,7 @@ canvas.on('mouse:down', function(obj) {
     const p1 = { x: pointer.x, y: pointer.y };
     // Localiza esta definición dentro de canvas.on('mouse:down', ...)
 const line = new fabric.Line([p1.x, p1.y, p1.x, p1.y], {
-    stroke: isCalibrating ? 'yellow' : (isMeasuringAngle ? '#3498db' : '#2ecc71'),
+    stroke: isCalibrating ? '#e74c3c' : (isMeasuringAngle ? '#3498db' : '#2ecc71'),
     strokeWidth: 1.5, // Antes era 4, ahora es 1.5 para máxima visibilidad
     strokeUniform: true,
     selectable: true,
@@ -502,8 +502,9 @@ function finalizarAngulo(o1, o2) {
     angleCount++; const id = `a_${Date.now()}`;
     const vertex = interseccionLineas(o1.line, o2.line);
     const valorText = `${calcularAngulo(o1.line, o2.line)}°`;
-    const label = makeLabel(valorText, vertex.x + 30, vertex.y - 10, '#3498db');
-    const arc = crearArco(o1.line, o2.line);
+    const color = o1.line.stroke || '#3498db';
+    const label = makeLabel(valorText, vertex.x + 30, vertex.y - 10, color);
+    const arc = crearArco(o1.line, o2.line, color);
     canvas.add(arc, label);
     measurements[id] = { line1: o1.line, n1: o1.n1, n1b: o1.n2, line2: o2.line, n2: o2.n1, n2b: o2.n2, label, arc, type: 'angulo', labelOffsetX: 0, labelOffsetY: 0 };
     label.measurementId = id;
@@ -538,9 +539,10 @@ function interseccionLineas(l1, l2) {
     return { x: x1 + t * (x2 - x1), y: y1 + t * (y2 - y1) };
 }
 
-function crearArco(l1, l2) {
+function crearArco(l1, l2, color) {
     const vertex = interseccionLineas(l1, l2);
     const r = 25;
+    const stroke = color || '#3498db';
     // Calcular dirección desde el vértice hacia el extremo más lejano de cada línea
     const d1a = Math.hypot(l1.x1 - vertex.x, l1.y1 - vertex.y);
     const d1b = Math.hypot(l1.x2 - vertex.x, l1.y2 - vertex.y);
@@ -562,7 +564,7 @@ function crearArco(l1, l2) {
     const endY = vertex.y + r * Math.sin(a1 + diff);
     const pathData = `M ${startX} ${startY} A ${r} ${r} 0 ${largeArc} 1 ${endX} ${endY}`;
     return new fabric.Path(pathData, {
-        fill: '', stroke: '#3498db', strokeWidth: 1.5,
+        fill: '', stroke, strokeWidth: 1.5,
         selectable: false, evented: false, hasControls: false, hasBorders: false
     });
 }
@@ -638,7 +640,7 @@ function actualizarValoresPanel(id) {
         }
         if (m.arc) {
             canvas.remove(m.arc);
-            m.arc = crearArco(m.line1, m.line2);
+            m.arc = crearArco(m.line1, m.line2, m.line1.stroke);
             m.arc.visible = m.line1.visible;
             canvas.add(m.arc);
         }
