@@ -1,19 +1,20 @@
 // CONFIGURACIÓN DEL CANVAS
-const canvas = new fabric.Canvas('mainCanvas', { 
-    width: window.innerWidth - 540, 
+const canvas = new fabric.Canvas('mainCanvas', {
+    width: window.innerWidth - 540,
     height: window.innerHeight - 60,
     selection: true,
+    preserveObjectStacking: true,
     backgroundColor: '#000'
 });
 
-let pixelToMm = 1, isCalibrating = false, isMeasuring = false, isMeasuringAngle = false, isAngleV2 = false, isROI = false;
-let measurementCount = 0, angleCount = 0, roiCount = 0, measurements = {}, tempLines = [];
+let pixelToMm = 1, isCalibrating = false, isMeasuring = false, isMeasuringAngle = false, isAngleV2 = false, isROI = false, isCircle = false, isPanning = false;
+let measurementCount = 0, angleCount = 0, roiCount = 0, circleCount = 0, measurements = {}, tempLines = [];
 let angleV2Points = [], ghostLine = null;
 let cropper;
 
 // --- MOTOR DE PANEO Y ZOOM ---
 canvas.on('mouse:down', function(opt) {
-    if (opt.e.altKey === true) {
+    if (opt.e.altKey === true || isPanning) {
         this.isDragging = true;
         this.selection = false;
         this.lastPosX = opt.e.clientX;
@@ -43,7 +44,7 @@ canvas.on('mouse:move', function(opt) {
 canvas.on('mouse:up', function() {
     this.setViewportTransform(this.viewportTransform);
     this.isDragging = false;
-    canvas.defaultCursor = 'default';
+    canvas.defaultCursor = isPanning ? 'grab' : 'default';
 });
 
 canvas.on('mouse:wheel', function(opt) {
@@ -139,6 +140,9 @@ function makeLabel(text, x, y, color) {
         } else if (m.type === 'roi') {
             defX = m.ellipse.left;
             defY = m.ellipse.top - m.ellipse.ry - 8;
+        } else if (m.type === 'circulo') {
+            defX = m.circle.left;
+            defY = m.circle.top - m.circle.radius - 8;
         } else {
             const v = interseccionLineas(m.line1, m.line2);
             defX = v.x + 30;
@@ -176,6 +180,49 @@ function makeNode(p) {
 }
 
 canvas.on('mouse:down', function(obj) {
+    // --- Círculo: trazado de radio (click centro, arrastra hacia afuera) ---
+    if (isCircle) {
+        if (this.isDragging) return;
+        if (obj.target) return;
+        canvas.discardActiveObject();
+        canvas.selection = false;
+
+        const center = canvas.getPointer(obj.e);
+        const circle = new fabric.Circle({
+            left: center.x, top: center.y, radius: 0,
+            originX: 'center', originY: 'center',
+            fill: '', stroke: '#e67e22', strokeWidth: 1.5, strokeUniform: true,
+            selectable: true, hasControls: false, hasBorders: false
+        });
+        const nCenter = makeNode(center);
+        const nRadius = makeNode(center);
+        canvas.add(circle, nCenter, nRadius);
+
+        const onMoveCircle = (opt) => {
+            const p = canvas.getPointer(opt.e);
+            const r = Math.hypot(p.x - center.x, p.y - center.y);
+            circle.set({ radius: r });
+            nRadius.set({ left: p.x, top: p.y });
+            canvas.renderAll();
+        };
+        const onUpCircle = () => {
+            canvas.off('mouse:move', onMoveCircle);
+            canvas.off('mouse:up', onUpCircle);
+            if (circle.radius < 2) {
+                canvas.remove(circle, nCenter, nRadius);
+            } else {
+                finalizarCirculo(circle, nCenter, nRadius);
+            }
+            isCircle = false;
+            canvas.selection = true;
+            canvas.skipTargetFind = false;
+            canvas.defaultCursor = 'default';
+            setActiveTool(null);
+        };
+        canvas.on('mouse:move', onMoveCircle);
+        canvas.on('mouse:up', onUpCircle);
+        return;
+    }
     // --- Ángulo V.2: 3 clicks ---
     if (isAngleV2) {
         if (this.isDragging) return;
@@ -391,6 +438,66 @@ function vincularEventosROI(ellipse, n1, n2) {
     ellipse.on('moving', fromEllipse);
 }
 
+function finalizarCirculo(circle, nCenter, nRadius) {
+    circleCount++;
+    const id = `c_${Date.now()}`;
+    const valorText = `Ø ${(circle.radius * 2 * pixelToMm).toFixed(2)} mm`;
+    const label = makeLabel(valorText, circle.left, circle.top - circle.radius - 8, '#e67e22');
+    canvas.add(label);
+    measurements[id] = { circle, nCenter, nRadius, label, type: 'circulo', labelOffsetX: 0, labelOffsetY: 0 };
+    label.measurementId = id;
+    circle.measurementId = id;
+    // Cursores: cualquier zona del círculo lo mueve; el nodo del radio amplía/contrae
+    circle.hoverCursor  = 'move';
+    circle.moveCursor   = 'move';
+    nCenter.hoverCursor = 'move';
+    nCenter.moveCursor  = 'move';
+    nRadius.hoverCursor = 'nwse-resize';
+    nRadius.moveCursor  = 'nwse-resize';
+    // Las cruces deben quedar sobre el trazo del círculo para ser visibles y clickeables
+    nCenter.bringToFront();
+    nRadius.bringToFront();
+    vincularEventosCirculo(circle, nCenter, nRadius);
+    agregarAlPanel(id, `Círculo ${circleCount}`, valorText);
+}
+
+function vincularEventosCirculo(circle, nCenter, nRadius) {
+    circle._prevLeft = circle.left;
+    circle._prevTop  = circle.top;
+
+    const fromRadius = () => {
+        const r = Math.hypot(nRadius.left - nCenter.left, nRadius.top - nCenter.top);
+        circle.set({ radius: r });
+        circle.setCoords();
+        actualizarValoresPanel(circle.measurementId);
+    };
+    const fromCenter = () => {
+        const dx = nCenter.left - circle.left;
+        const dy = nCenter.top - circle.top;
+        circle.set({ left: nCenter.left, top: nCenter.top });
+        circle._prevLeft = circle.left;
+        circle._prevTop  = circle.top;
+        nRadius.set({ left: nRadius.left + dx, top: nRadius.top + dy });
+        circle.setCoords();
+        nRadius.setCoords();
+        actualizarValoresPanel(circle.measurementId);
+    };
+    const fromCircle = () => {
+        const dx = circle.left - circle._prevLeft;
+        const dy = circle.top  - circle._prevTop;
+        circle._prevLeft = circle.left;
+        circle._prevTop  = circle.top;
+        nCenter.set({ left: nCenter.left + dx, top: nCenter.top + dy });
+        nRadius.set({ left: nRadius.left + dx, top: nRadius.top + dy });
+        nCenter.setCoords();
+        nRadius.setCoords();
+        actualizarValoresPanel(circle.measurementId);
+    };
+    nCenter.on('moving', fromCenter);
+    nRadius.on('moving', fromRadius);
+    circle.on('moving', fromCircle);
+}
+
 function finalizarAngulo(o1, o2) {
     angleCount++; const id = `a_${Date.now()}`;
     const vertex = interseccionLineas(o1.line, o2.line);
@@ -510,6 +617,17 @@ function actualizarValoresPanel(id) {
             });
             m.label.setCoords();
         }
+    } else if (m.type === 'circulo') {
+        const valorText = `Ø ${(m.circle.radius * 2 * pixelToMm).toFixed(2)} mm`;
+        valSpan.innerText = valorText;
+        if (m.label) {
+            m.label.set({
+                text: valorText,
+                left: m.circle.left + (m.labelOffsetX || 0),
+                top:  m.circle.top - m.circle.radius - 8 + (m.labelOffsetY || 0)
+            });
+            m.label.setCoords();
+        }
     } else {
         const valorText = `${calcularAngulo(m.line1, m.line2)}°`;
         valSpan.innerText = valorText;
@@ -538,6 +656,7 @@ window.toggleVisibility = function(id) {
     const m = measurements[id];
     const isVis = m.type === 'distancia' ? !m.line.visible
                 : m.type === 'roi'       ? !m.ellipse.visible
+                : m.type === 'circulo'   ? !m.circle.visible
                 : !m.line1.visible;
     if (m.label) {
         if (!isVis && canvas.getActiveObject() === m.label) canvas.discardActiveObject();
@@ -546,6 +665,7 @@ window.toggleVisibility = function(id) {
     if (m.arc) m.arc.visible = isVis;
     if (m.type === 'distancia') { m.line.visible = m.n1.visible = m.n2.visible = isVis; }
     else if (m.type === 'roi') { m.ellipse.visible = m.n1.visible = m.n2.visible = isVis; }
+    else if (m.type === 'circulo') { m.circle.visible = m.nCenter.visible = m.nRadius.visible = isVis; }
     else { m.line1.visible = m.n1.visible = m.n1b.visible = m.line2.visible = m.n2.visible = m.n2b.visible = isVis; }
     canvas.renderAll();
 };
@@ -564,20 +684,34 @@ document.getElementById('btn-undo').onclick = () => {
     if (m.arc) canvas.remove(m.arc);
     if (m.type === 'distancia') canvas.remove(m.line, m.n1, m.n2);
     else if (m.type === 'roi') canvas.remove(m.ellipse, m.n1, m.n2);
+    else if (m.type === 'circulo') canvas.remove(m.circle, m.nCenter, m.nRadius);
     else canvas.remove(m.line1, m.n1, m.n1b, m.line2, m.n2, m.n2b);
     document.getElementById(`item-${lastId}`).remove(); delete measurements[lastId];
     canvas.renderAll();
 };
 
-const toolBtns = ['btn-calibrate', 'btn-line', 'btn-angle', 'btn-angle-v2', 'btn-roi'];
+const toolBtns = ['btn-calibrate', 'btn-line', 'btn-angle', 'btn-angle-v2', 'btn-roi', 'btn-circle', 'btn-pan'];
 function setActiveTool(activeId) {
     toolBtns.forEach(id => { const el = document.getElementById(id); if (el) el.classList.remove('active-tool'); });
     if (activeId) { const el = document.getElementById(activeId); if (el) el.classList.add('active-tool'); }
 }
-function resetModes() { isCalibrating = isMeasuring = isMeasuringAngle = isAngleV2 = isROI = false; angleV2Points = []; tempLines = []; setActiveTool(null); }
+function resetModes() {
+    isCalibrating = isMeasuring = isMeasuringAngle = isAngleV2 = isROI = isCircle = isPanning = false;
+    angleV2Points = []; tempLines = [];
+    setActiveTool(null);
+}
 document.getElementById('btn-calibrate').onclick = () => { resetModes(); isCalibrating = true; setActiveTool('btn-calibrate'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
 document.getElementById('btn-line').onclick = () => { resetModes(); isMeasuring = true; setActiveTool('btn-line'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
 const btnAngle = document.getElementById('btn-angle');
 if (btnAngle) btnAngle.onclick = () => { resetModes(); isMeasuringAngle = true; setActiveTool('btn-angle'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
 document.getElementById('btn-angle-v2').onclick = () => { resetModes(); isAngleV2 = true; setActiveTool('btn-angle-v2'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; canvas.selection = false; };
 document.getElementById('btn-roi').onclick = () => { resetModes(); isROI = true; setActiveTool('btn-roi'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-circle').onclick = () => { resetModes(); isCircle = true; setActiveTool('btn-circle'); canvas.defaultCursor = 'crosshair'; canvas.skipTargetFind = true; };
+document.getElementById('btn-pan').onclick = () => {
+    resetModes(); isPanning = true; setActiveTool('btn-pan');
+    canvas.defaultCursor = 'grab'; canvas.skipTargetFind = true; canvas.selection = false;
+};
+document.getElementById('btn-fit').onclick = () => {
+    canvas.setViewportTransform([1, 0, 0, 1, 0, 0]);
+    canvas.requestRenderAll();
+};

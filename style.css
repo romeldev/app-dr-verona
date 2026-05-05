@@ -41,6 +41,9 @@ button.active-tool { background: #3498db; color: #fff; border-color: #2980b9; }
 #btn-line { border-left: 5px solid #2ecc71; }
 #btn-angle, #btn-angle-v2 { border-left: 5px solid #3498db; }
 #btn-roi { border-left: 5px solid #9b59b6; }
+#btn-circle { border-left: 5px solid #e67e22; }
+#btn-pan { border-left: 5px solid #95a5a6; }
+#btn-fit { border-left: 5px solid #95a5a6; }
 #btn-undo { color: #e74c3c; margin-top: 10px;}
 
 .action-btn { background: #27ae60 !important; font-weight: bold; border: none !important; }
