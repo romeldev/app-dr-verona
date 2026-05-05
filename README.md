@@ -4,6 +4,8 @@ Herramienta web para **planificación quirúrgica y biomecánica** sobre radiogr
 
 Aplicación 100% del lado del cliente: las imágenes nunca salen del navegador.
 
+🔗 **Demo en vivo:** [https://romeldev.github.io/app-dr-verona](https://romeldev.github.io/app-dr-verona)
+
 ---
 
 ## Funcionalidades
